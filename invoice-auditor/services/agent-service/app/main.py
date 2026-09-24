@@ -9,9 +9,12 @@ import logging
 from fastapi import FastAPI
 
 from app.api.health import router as health_router
+from app.api.routes.feedback import router as feedback_router
 from app.api.errors import register_exception_handlers
 from app.clients.http_client import start_http_client, stop_http_client
+from app.clients.redis_client import start_redis, stop_redis
 from app.config.settings import settings
+from app.worker.file_monitor import start_file_monitor
 
 # --- Structured Logging Setup ---
 logging.basicConfig(
@@ -32,6 +35,7 @@ def create_app() -> FastAPI:
 
     # --- Register Routers ---
     app.include_router(health_router)
+    app.include_router(feedback_router)
 
     # --- Register Exception Handlers ---
     register_exception_handlers(app)
@@ -48,12 +52,29 @@ def create_app() -> FastAPI:
         
         await start_http_client()
         logger.info("HTTP client initialized.")
+        
+        await start_redis()
+        logger.info("Redis pool initialized.")
+        
+        # Start the file monitor in the background
+        monitor_dir = "/app/data/incoming" if settings.environment == "production" else "./incoming"
+        app.state.monitor_task = asyncio.create_task(start_file_monitor(monitor_dir))
+        logger.info(f"File monitor task started watching {monitor_dir}")
 
     @app.on_event("shutdown")
     async def shutdown_event():
         logger.info("Agent Service shutting down...")
+        
+        # Cancel the file monitor task
+        if hasattr(app.state, "monitor_task"):
+            app.state.monitor_task.cancel()
+            logger.info("File monitor task cancelled.")
+            
         await stop_http_client()
         logger.info("HTTP client closed.")
+        
+        await stop_redis()
+        logger.info("Redis pool closed.")
 
     return app
 
