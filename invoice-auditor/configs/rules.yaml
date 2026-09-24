@@ -1,0 +1,74 @@
+# ============================================================
+# Invoice Audit Rules Configuration
+# ============================================================
+
+# Required fields for invoice header
+required_fields:
+  invoice_number: true
+  invoice_date: true
+  vendor_name: true
+  po_number: true
+  currency: true
+  total_amount: true
+
+# Required fields for each line item
+line_item_required_fields:
+  item_code: true
+  description: true
+  quantity: true
+  unit_price: true
+  line_total: true
+
+# Fields whose absence triggers REJECT instead of REVIEW
+critical_fields:
+  - invoice_number
+  - total_amount
+
+# Arithmetic validation tolerance (percentage)
+# Accounts for legitimate rounding differences
+arithmetic_tolerance_pct: 0.01
+
+# ERP comparison tolerances
+tolerances:
+  quantity:
+    threshold_pct: 2.0
+    severity_above: high
+  unit_price:
+    threshold_pct: 1.0
+    severity_above: critical
+  total_amount:
+    threshold_pct: 1.0
+    severity_above: critical
+
+# Deterministic recommendation rules
+recommendation:
+  missing_required_field: review
+  missing_critical_field: reject
+  arithmetic_failure: review
+  erp_mismatch_high: review
+  erp_mismatch_critical: reject
+  erp_unavailable: review
+  all_passed: approve
+
+# Translation settings
+translation:
+  min_text_length_for_detection: 20
+  cache_ttl_seconds: 604800  # 7 days
+
+# File monitoring settings
+monitor:
+  poll_interval_seconds: 5
+  stability_checks: 2
+  max_file_size_mb: 100
+  supported_extensions:
+    - pdf
+    - docx
+    - png
+
+# RAG settings
+rag:
+  max_reflection_retries: 2
+  relevance_threshold: 0.6
+  top_k: 5
+  chunk_size: 512
+  chunk_overlap: 50

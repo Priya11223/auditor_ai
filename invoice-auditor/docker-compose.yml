@@ -1,0 +1,182 @@
+# ============================================================
+# Invoice Audit & Validation Platform - Docker Compose
+# ============================================================
+# Services:
+#   1. postgres     - System of record (audit, erp, langgraph schemas)
+#   2. redis        - Translation cache
+#   3. qdrant       - Vector index for RAG
+#   4. agent-service - Core processing engine (FastAPI)
+#   5. mock-erp     - Mock ERP HTTP API (FastAPI)
+#   6. streamlit-ui - Human-in-the-loop dashboard
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # Infrastructure: PostgreSQL
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: invoice-auditor-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - invoice-net
+
+  # ----------------------------------------------------------
+  # Infrastructure: Redis
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: invoice-auditor-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - invoice-net
+
+  # ----------------------------------------------------------
+  # Infrastructure: Qdrant
+  # ----------------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    container_name: invoice-auditor-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - invoice-net
+
+  # ----------------------------------------------------------
+  # Application: Agent Service
+  # ----------------------------------------------------------
+  agent-service:
+    build:
+      context: ./services/agent-service
+      dockerfile: Dockerfile
+    container_name: invoice-auditor-agent
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL_SYNC: ${DATABASE_URL_SYNC}
+      REDIS_URL: ${REDIS_URL}
+      QDRANT_URL: ${QDRANT_URL}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION}
+      ERP_BASE_URL: ${ERP_BASE_URL}
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID}
+      INCOMING_DIR: ${INCOMING_DIR}
+      REPORTS_DIR: ${REPORTS_DIR}
+      LOG_LEVEL: ${LOG_LEVEL}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/agent-service:/app
+      - ./incoming:/incoming
+      - ./reports:/reports
+      - ./configs:/configs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      mock-erp:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - invoice-net
+
+  # ----------------------------------------------------------
+  # Application: Mock ERP Service
+  # ----------------------------------------------------------
+  mock-erp:
+    build:
+      context: ./services/mock-erp
+      dockerfile: Dockerfile
+    container_name: invoice-auditor-mock-erp
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL}
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/mock-erp:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - invoice-net
+
+  # ----------------------------------------------------------
+  # Application: Streamlit UI
+  # ----------------------------------------------------------
+  streamlit-ui:
+    build:
+      context: ./services/streamlit-ui
+      dockerfile: Dockerfile
+    container_name: invoice-auditor-streamlit
+    environment:
+      AGENT_SERVICE_URL: ${AGENT_SERVICE_URL}
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./services/streamlit-ui:/app
+    depends_on:
+      agent-service:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - invoice-net
+
+# ----------------------------------------------------------
+# Volumes
+# ----------------------------------------------------------
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+
+# ----------------------------------------------------------
+# Networks
+# ----------------------------------------------------------
+networks:
+  invoice-net:
+    driver: bridge
+    name: invoice-auditor-network

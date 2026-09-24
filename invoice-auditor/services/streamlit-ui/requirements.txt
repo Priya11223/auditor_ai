@@ -1,0 +1,6 @@
+# ============================================================
+# Streamlit UI - Dependencies
+# Phase 1: Minimal dependencies for health check page.
+# ============================================================
+streamlit==1.45.1
+httpx==0.28.1
